@@ -1,0 +1,276 @@
+
+// -----------------------------------------------------------------------------
+// SEARCH
+// -----------------------------------------------------------------------------
+// search for the term 'malicious' across all tables
+search 'malicious'
+
+// search for the term 'malicious' across all tables and then output the table names
+search 'malicious'
+| distinct $table
+
+// search for the term 'malicious' in specified tables
+search in (SecurityAlert, SecurityAlert) 'malicious'
+
+// search for the term 'malicious' in the column 'Description'
+search Description: 'malicious'
+
+// -----------------------------------------------------------------------------
+// WHERE
+// -----------------------------------------------------------------------------
+// Security Alerts - High
+SecurityAlert 
+ | where AlertSeverity == "High"
+
+// Security Alerts - High and from Defender for Endpoint
+SecurityAlert 
+ | where AlertSeverity == "High" and ProviderName == "MDATP"
+
+// -----------------------------------------------------------------------------
+// TAKE
+// -----------------------------------------------------------------------------
+// Security Alerts - get random 10 events
+SecurityAlert 
+ | where AlertSeverity == "High" 
+ | take 10 
+
+// -----------------------------------------------------------------------------
+// COUNT - SUMMARIZE
+// -----------------------------------------------------------------------------
+// Count Alerts
+SecurityAlert
+| count
+
+// Count alerts by product
+SecurityAlert
+| summarize Alerts = count() by ProductName
+
+// Count total computers from last 24 hours
+SecurityEvent
+| summarize dcount(Computer)
+
+// show last event per computer
+SecurityEvent 
+| summarize arg_max(TimeGenerated,*) by Computer
+
+
+// -----------------------------------------------------------------------------
+// EXTEND
+// -----------------------------------------------------------------------------
+// extend file name 
+SecurityAlert
+| extend File_Name_ = tostring(parse_json(ExtendedProperties).["File Name"])
+
+// extend with case
+SecurityAlert
+| where TimeGenerated > ago(7d)
+| extend severityOrder = case (
+    AlertSeverity == "High", 3,
+    AlertSeverity == "Medium", 2, 
+    AlertSeverity == "Low", 1,
+    AlertSeverity == "Informational", 0,
+    -1)
+
+
+// -----------------------------------------------------------------------------
+// DISTINCT
+// -----------------------------------------------------------------------------
+SecurityAlert
+| extend HostName_ = tostring(parse_json(Entities)[1].HostName)
+| distinct AlertName
+
+SecurityAlert
+| extend HostName_ = tostring(parse_json(Entities)[1].HostName)
+| distinct AlertName,HostName
+
+
+// -----------------------------------------------------------------------------
+// PROJECT
+// -----------------------------------------------------------------------------
+let timeago = 7d;
+let xEventIDs = dynamic(['4624','4634']);
+SecurityEvent
+| where TimeGenerated > ago (timeago)
+| where (EventID) in (xEventIDs)
+| project TimeGenerated, Computer, EventID, Activity, TargetUserName, LogonTypeName
+
+
+// -----------------------------------------------------------------------------
+// LET
+// -----------------------------------------------------------------------------
+// let
+let timeago = 24h;
+let xEventIDs = dynamic(['4624','4634']);
+SecurityEvent
+| where TimeGenerated > ago (timeago)
+| where (EventID) in (xEventIDs)
+
+
+// -----------------------------------------------------------------------------
+// AGO and DATES
+// -----------------------------------------------------------------------------
+SecurityAlert
+| where TimeGenerated > ago (1d)
+
+SecurityAlert
+| where TimeGenerated > ago (4h)
+
+SecurityAlert
+| where TimeGenerated between (ago(3d) .. ago(1d) ) 
+
+
+SecurityAlert
+| extend DayGenerated = startofday(TimeGenerated)
+| where TimeGenerated between (ago(3d) .. ago(1d) ) 
+| distinct DayGenerated
+
+// -----------------------------------------------------------------------------
+// RENDER
+// -----------------------------------------------------------------------------
+SecurityEvent
+| summarize TotalEvents = count() by EventID, Activity
+| render columnchart   
+
+SecurityEvent 
+| where EventID == 4624
+| summarize LogonEvents = count() by bin(TimeGenerated,1d)
+| render timechart
+
+// -----------------------------------------------------------------------------
+// JOIN
+// -----------------------------------------------------------------------------
+SecurityEvent 
+| where EventID == "4624" 
+| where Account contains "tim"
+| summarize LogOnCount=count() by EventID, Account 
+| project LogOnCount, Account 
+| join kind = inner (
+     SecurityEvent 
+     | where EventID == "4634" 
+     | summarize LogOffCount=count() by EventID, Account 
+     | project LogOffCount, Account 
+) on Account
+
+
+// -----------------------------------------------------------------------------
+// Dates and Time
+// -----------------------------------------------------------------------------
+print ago(1d)           // days
+print ago(1h)           // hours
+
+// security alerts from last hour
+SecurityAlert
+| where TimeGenerated > ago(1h)
+
+
+// -----------------------------------------------------------------------------
+// EXTERNAL DATA
+// -----------------------------------------------------------------------------
+let exchangeserverioninfo = (externaldata (ProductName:string, ReleaseDate:string, Build_short:string, Build_long:string)
+[@"https://raw.githubusercontent.com/alexverboon/MDATP/master/AdvancedHunting/Exchange/exchnage_versions.csv"]
+with(format="csv",ignoreFirstRecord=true))
+| where ProductName !startswith "#"
+| project ProductName,ReleaseDate, Build_long, Build_short;
+exchangeserverioninfo
+
+
+let urlhaus_online = (externaldata(url_online: string ) [@"https://urlhaus.abuse.ch/downloads/text_online/"]
+with (format="txt"))
+| project url_online;
+urlhaus_online
+| where url_online endswith ".txt"
+
+
+
+
+// -----------------------------------------------------------------------------
+// Monitoring Service Principals
+// -----------------------------------------------------------------------------
+
+AADServicePrincipalSignInLogs
+| where ServicePrincipalName contains "MTPAPI"
+// your IP address
+| where IPAddress != "77.56.n.n"
+| extend countryOrRegion_ = tostring(parse_json(LocationDetails).countryOrRegion)
+| extend state_ = tostring(parse_json(LocationDetails).state)
+| extend city_ = tostring(parse_json(LocationDetails).city)
+| project TimeGenerated, ServicePrincipalName, countryOrRegion_, state_, city_, IPAddress
+| extend AccountCustomEntity = ServicePrincipalName
+| extend IPCustomEntity = IPAddress
+
+// -----------------------------------------------------------------------------
+// Web Mail
+// -----------------------------------------------------------------------------
+let timeframe = 7d;
+// popular public web service domains
+let emailservicedomains =dynamic (["gmail.com","outlook.com","hotmail.com","gmx.de",
+"yahoo.com","mail.com","web.de","mail.ru","freenet.de","ziggo.nl","xs4all.nl",
+"seznam.cz","email.cz","aol.com","hotmail.co.uk","hotmail.fr",
+"msn.com","yahoo.fr","orange.fr","wanadoo.fr","comcast.net",
+"yahoo.com.br","yahoo.co.in","live.com","rediffmail.com","free.fr","yandex.ru","ymail.com","libero.it",
+"uol.com.br","bol.com.br","cox.net","hotmail.it","sbcglobal.net","sfr.fr","live.fr","verizon.net","live.co.uk","googlemail.com","yahoo.es",
+"ig.com.br","live.nl","bigpond.com","terra.com.br","yahoo.it","neuf.fr","yahoo.de","alice.it","rocketmail.com","att.net","laposte.net",
+"facebook.com","bellsouth.net","yahoo.in","hotmail.es","charter.net","yahoo.ca","yahoo.com.au","rambler.ru","hotmail.de","tiscali.it",
+"shaw.ca","yahoo.co.jp","sky.com","earthlink.net","optonline.net","freenet.de","t-online.de","aliceadsl.fr",
+"virgilio.it","home.nl","qq.com","telenet.be","me.com","yahoo.com.ar","tiscali.co.uk","yahoo.com.mx","voila.fr","gmx.net",
+"mail.com","planet.nl","tin.it","live.it","ntlworld.com","arcor.de","yahoo.co.id","frontiernet.net","hetnet.nl","live.com.au",
+"yahoo.com.sg","zonnet.nl","club-internet.fr","juno.com","optusnet.com.au","blueyonder.co.uk","bluewin.ch","highspeed.ch",
+"skynet.be","sympatico.ca","windstream.net","mac.com","centurytel.net","chello.nl","live.ca","aim.com","bigpond.net.au"
+"yahoo.co.uk"]);
+EmailEvents
+| where Timestamp > ago (timeframe)
+| extend ReceipientDomain = tostring(split(RecipientEmailAddress,"@",1)[0])
+| where ReceipientDomain in (emailservicedomains)
+| summarize count() by ReceipientDomain 
+
+
+// -----------------------------------------------------------------------------
+// Event Spikes
+// -----------------------------------------------------------------------------
+
+SecurityEvent 
+| summarize count() by EventID
+
+SecurityEvent 
+| where EventID == '4625'
+| summarize count() by TargetAccount
+
+SecurityEvent 
+| where EventID == '4625'
+| summarize TotalEvents = count() by bin(TimeGenerated,1h), TargetAccount
+| render timechart 
+
+
+
+// -----------------------------------------------------------------------------
+// Defender for Endpoint deployment progress 
+// -----------------------------------------------------------------------------
+DeviceInfo
+| summarize arg_max(Timestamp,*) by DeviceId
+| count 
+
+DeviceInfo
+| where Timestamp > ago(30d)
+| summarize FirstSeen = arg_min(Timestamp,*) by DeviceId
+| where FirstSeen > ago  (1d)
+| summarize NewClients = count() by bin(FirstSeen,1d)
+| render timechart 
+
+
+
+// -----------------------------------------------------------------------------
+// OTHER SAMPLES
+// -----------------------------------------------------------------------------
+// Conditional access
+SigninLogs 
+| where TimeGenerated >= ago(1d)
+| extend OS = DeviceDetail.operatingSystem, Browser = DeviceDetail.browser
+| extend ConditionalAccessPol0Name = tostring(ConditionalAccessPolicies[0].displayName), ConditionalAccessPol0Result = tostring(ConditionalAccessPolicies[0].result)
+| extend ConditionalAccessPol1Name = tostring(ConditionalAccessPolicies[1].displayName), ConditionalAccessPol1Result = tostring(ConditionalAccessPolicies[1].result)
+| extend ConditionalAccessPol2Name = tostring(ConditionalAccessPolicies[2].displayName), ConditionalAccessPol2Result = tostring(ConditionalAccessPolicies[2].result)
+| extend StatusCode = tostring(Status.errorCode), StatusDetails = tostring(Status.additionalDetails)
+| extend State = tostring(LocationDetails.state), City = tostring(LocationDetails.city)
+| extend Date = startofday(TimeGenerated), Hour = datetime_part("Hour", TimeGenerated)
+| summarize count() by Date, Identity, UserDisplayName, UserPrincipalName, IPAddress, ResultType, ResultDescription, StatusCode, StatusDetails, ConditionalAccessPol0Name, ConditionalAccessPol0Result, ConditionalAccessPol1Name, ConditionalAccessPol1Result, ConditionalAccessPol2Name, ConditionalAccessPol2Result, Location, State, City
+| sort by Date
+
